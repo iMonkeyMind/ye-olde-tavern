@@ -56,13 +56,13 @@ async def verbalize(packets: list[IntentionPacket], user_text: str, recent_log: 
         # Fallback for testing without key: return formal intentions as plain text
         lines = []
         for p in packets[:6]:
-            lines.append(f"{p.agent}: [{p.intention_type.value}] {p.content_hint} ({p.formal_reason})")
+            lines.append(f"{p.agent}: [{p.intention_type}] {p.content_hint} ({p.formal_reason})")
         return "\n".join(lines)
 
     packets_json = [
         {
             "agent": p.agent,
-            "intention_type": p.intention_type.value,
+            "intention_type": p.intention_type,
             "target": p.target,
             "priority": round(p.priority, 2),
             "formal_reason": p.formal_reason,
@@ -121,7 +121,7 @@ async def chat(req: ChatRequest):
     except Exception as e:
         # On API failure still return formal intentions so the site is never dead
         text = "\n".join(
-            f"{p.agent}: [{p.intention_type.value}] {p.content_hint}"
+            f"{p.agent}: [{p.intention_type}] {p.content_hint}"
             for p in packets[:5]
         )
         text = f"[verbalizer offline — formal intentions]\n{text}\n\nError: {str(e)[:120]}"
