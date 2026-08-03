@@ -128,7 +128,7 @@ async def chat(req: ChatRequest):
 
     return {
         "reply": text,
-        "tick": tavern.tick_count,
+        "tick": tavern.clock,
         "pressure": tavern.pressure,
         "agents_active": [p.agent for p in packets[:5]],
     }
