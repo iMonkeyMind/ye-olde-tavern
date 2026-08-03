@@ -1,14 +1,9 @@
 """
-Tavern Settlement v0.1 — Pure Deterministic Kernel
-Stage-1.5 of Mara under locked Parametric Field formalisms.
+Tavern Settlement v0.2 — Pure Deterministic Kernel
+Upgraded intention layer for threat / violence / escalation reactivity.
 
-No LLM inside this file. All behavior emerges from:
-- Locked position-to-access properties
-- Domain pairs (implicit in TIM)
-- Directed histories + trust
-- Mild ambient pressure + scarcity
-
-Intention packets are the only output. Verbalization is external (Grok API overlay).
+Still pure formal. No LLM inside.
+Intention packets remain the only output. Verbalization stays external.
 """
 
 from __future__ import annotations
@@ -17,14 +12,11 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 import time
 import uuid
+import re
 
 
 # ---------------------------------------------------------------------------
-# Locked access properties by position number (from Formal Bridge / Living Knot)
-# Bandwidth: 1=4D, 2=3D, 3=2D, 4=1D, 5=1D, 6=2D, 7=3D, 8=4D
-# Conscious: 1-4, Automatic: 5-8
-# Valued: 1,2,5,6   Unvalued: 3,4,7,8
-# Accepting: 1,3,5,7   Producing: 2,4,6,8
+# Locked access properties by position number
 # ---------------------------------------------------------------------------
 
 POSITION_ACCESS = {
@@ -49,6 +41,10 @@ class IntentionType(str, Enum):
     WITHDRAW = "withdraw"
     ADMIT = "admit"
     REFUSE = "refuse"
+    DEFEND = "defend"
+    ATTACK = "attack"
+    ALARM = "alarm"
+    FALL = "fall"          # incapacitated / dying
 
 
 @dataclass
@@ -65,9 +61,9 @@ class IntentionPacket:
     agent: str
     intention_type: IntentionType
     target: Optional[str]
-    priority: float          # 0.0 – 1.0
-    formal_reason: str       # short reconstructible reason from constitution + history + pressure
-    content_hint: str        # brief internal hint for verbalizer (never free text)
+    priority: float
+    formal_reason: str
+    content_hint: str
     trust_delta: float = 0.0
 
 
@@ -78,14 +74,54 @@ class Agent:
     position: int
     role: str
     history: List[DirectedHistory] = field(default_factory=list)
-    trust: Dict[str, float] = field(default_factory=dict)   # other -> current trust
+    trust: Dict[str, float] = field(default_factory=dict)
     last_intention: Optional[IntentionPacket] = None
+    incapacitated: bool = False
 
-    def access(self) -> dict:
-        return POSITION_ACCESS[self.position]
 
-    def current_trust(self, other: str) -> float:
-        return self.trust.get(other, 0.0)
+# ---------------------------------------------------------------------------
+# Threat detection helpers
+# ---------------------------------------------------------------------------
+
+VIOLENCE_WORDS = {
+    "blade", "sword", "knife", "stab", "cut", "slash", "kill", "murder",
+    "draw", "weapon", "attack", "strike", "hit", "punch", "fight",
+    "heads", "platter", "blood", "die", "death", "run through", "skewer"
+}
+
+THREAT_PHRASES = [
+    r"draw.*(blade|sword|knife)",
+    r"stab",
+    r"run .* through",
+    r"kill",
+    r"heads on a platter",
+    r"dark seeds",
+    r"attack",
+]
+
+
+def detect_threat_level(text: str) -> float:
+    """Return 0.0–1.0 threat intensity from user text."""
+    if not text:
+        return 0.0
+    lower = text.lower()
+    score = 0.0
+
+    for w in VIOLENCE_WORDS:
+        if w in lower:
+            score += 0.25
+
+    for pat in THREAT_PHRASES:
+        if re.search(pat, lower):
+            score += 0.35
+
+    # Escalation markers
+    if "run the bar keep through" in lower or "run him through" in lower or "run her through" in lower:
+        score += 0.6
+    if "stab" in lower and ("keep" in lower or "bar" in lower):
+        score += 0.5
+
+    return min(1.0, score)
 
 
 # ---------------------------------------------------------------------------
@@ -95,19 +131,19 @@ class Agent:
 class TavernSettlement:
     def __init__(self):
         self.agents: Dict[str, Agent] = {}
-        self.pressure: float = 0.25          # mild ambient
-        self.scarcity: Dict[str, float] = {  # 0.0 = plenty, 1.0 = critical
+        self.pressure: float = 0.25
+        self.scarcity: Dict[str, float] = {
             "attention": 0.35,
             "space": 0.30,
             "ale": 0.20,
         }
         self.event_log: List[dict] = []
         self.tick_count: int = 0
+        self.current_threat: float = 0.0
         self._seed_population()
         self._seed_histories()
 
     def _seed_population(self):
-        """8 agents under locked rules. Positions chosen for coverage + tavern dynamics."""
         specs = [
             ("Keep",   "LSI", 1, "Owner / admission & resource control"),
             ("Bren",   "LIE", 2, "Merchant / supplier"),
@@ -122,51 +158,32 @@ class TavernSettlement:
             self.agents[name] = Agent(name=name, tim=tim, position=pos, role=role)
 
     def _seed_histories(self):
-        """Minimal directed seed events from the locked contract."""
         now = time.time()
         day = 86400.0
-
         seeds = [
-            # Keep ↔ Kael
             ("Keep", "Kael", now - 4*day, "Kael contested preferred table; Keep enforced ownership", -0.18),
             ("Kael", "Keep", now - 4*day, "Challenged table claim and was refused", -0.18),
-            # Keep ↔ Bren
             ("Keep", "Bren", now - 6*day, "Accepted large supply delivery under mild scarcity", +0.22),
             ("Bren", "Keep", now - 6*day, "Delivered supply under structured terms", +0.22),
-            # Nessa ↔ Tarin
             ("Nessa", "Tarin", now - 2*day, "Shared extended gossip about a transient", +0.25),
             ("Tarin", "Nessa", now - 2*day, "Shared extended gossip about a transient", +0.25),
-            # Nessa ↔ Sera
             ("Nessa", "Sera", now - 3*day, "Told a personal story; Sera registered relational texture", +0.12),
             ("Sera", "Nessa", now - 3*day, "Registered relational texture of Nessa's story", +0.12),
-            # Kael ↔ Server
             ("Kael", "Server", now - 1*day, "Server mediated raised-voice exchange", -0.05),
             ("Server", "Kael", now - 1*day, "Mediated Kael's raised-voice exchange", +0.08),
-            # Sera ↔ Orin
             ("Sera", "Orin", now - 5*day, "Quiet shared observation of corner-table dispute", +0.10),
             ("Orin", "Sera", now - 5*day, "Quiet shared observation of corner-table dispute", +0.10),
-            # Bren ↔ Server
             ("Bren", "Server", now - 1*day, "Server relayed customer request for specialty", +0.15),
             ("Server", "Bren", now - 1*day, "Relayed customer request for Bren's specialty", +0.15),
-            # Orin ↔ Keep
             ("Orin", "Keep", now - 7*day, "Noted structural inefficiency in seating layout", +0.05),
             ("Keep", "Orin", now - 7*day, "Registered structural note without immediate change", +0.05),
         ]
-
         for agent_name, other, ts, event, delta in seeds:
             a = self.agents[agent_name]
             a.history.append(DirectedHistory(timestamp=ts, other=other, event=event, trust_delta=delta))
             a.trust[other] = a.trust.get(other, 0.0) + delta
 
-    # ------------------------------------------------------------------
-    # Core operations
-    # ------------------------------------------------------------------
-
     def process_user_message(self, user_name: str, text: str) -> List[IntentionPacket]:
-        """
-        Turn free text into a structured event, advance one tick,
-        return the list of intention packets for the verbalizer.
-        """
         event = {
             "id": str(uuid.uuid4()),
             "type": "user_speech",
@@ -175,88 +192,103 @@ class TavernSettlement:
             "timestamp": time.time(),
         }
         self.event_log.append(event)
+
+        # Update threat level from this message
+        self.current_threat = detect_threat_level(text)
+
+        # Check for lethal action against Keep
+        lower = text.lower()
+        if self.current_threat > 0.7 and any(w in lower for w in ("keep", "bar keep", "barkeeper", "owner")):
+            if any(w in lower for w in ("stab", "run through", "kill", "skewer", "blade through")):
+                if "Keep" in self.agents and not self.agents["Keep"].incapacitated:
+                    self.agents["Keep"].incapacitated = True
+                    self.pressure = min(1.0, self.pressure + 0.45)
+                    self.scarcity["attention"] = min(1.0, self.scarcity["attention"] + 0.4)
+
         return self.tick(trigger_event=event)
 
     def tick(self, trigger_event: Optional[dict] = None) -> List[IntentionPacket]:
-        """
-        Advance the settlement one step under current pressure + scarcity.
-        Returns structured intention packets only.
-        """
         self.tick_count += 1
         packets: List[IntentionPacket] = []
 
-        # Simple relevance: agents react more if the event mentions them
-        # or if pressure/scarcity is elevated, or if they have active threads.
         for name, agent in self.agents.items():
+            if agent.incapacitated:
+                # Only produce a single low or zero priority fall/observe once
+                if agent.last_intention is None or agent.last_intention.intention_type != IntentionType.FALL:
+                    packets.append(IntentionPacket(
+                        agent=name,
+                        intention_type=IntentionType.FALL,
+                        target=None,
+                        priority=0.95,
+                        formal_reason="Agent incapacitated by lethal action",
+                        content_hint="falls or lies still, no further speech",
+                    ))
+                continue
+
             intention = self._generate_intention(agent, trigger_event)
-            if intention and intention.priority > 0.15:
+            if intention and intention.priority > 0.12:
                 agent.last_intention = intention
                 packets.append(intention)
 
-        # Sort by priority descending so verbalizer can render strongest first
         packets.sort(key=lambda p: p.priority, reverse=True)
         return packets
 
     def _generate_intention(self, agent: Agent, trigger: Optional[dict]) -> Optional[IntentionPacket]:
-        """
-        Pure formal generation. No language model.
-        Intention emerges from access properties + trust + pressure + scarcity + recent history.
-        """
         access = agent.access()
+        threat = self.current_threat
         pressure = self.pressure
-        att_scar = self.scarcity["attention"]
-        space_scar = self.scarcity["space"]
 
-        # Baseline priority influenced by conscious bandwidth and valued status
-        base = 0.25
+        base = 0.22
         if access["conscious"]:
-            base += 0.15
+            base += 0.12
         if access["valued"]:
             base += 0.10
-        base += pressure * 0.3
-        base += att_scar * 0.2
+        base += pressure * 0.25
 
-        # If user just spoke, raise priority for social / accepting agents
-        if trigger and trigger.get("type") == "user_speech":
-            if access["accepting"] or agent.tim in ("IEE", "SEI", "EII", "ESE"):
-                base += 0.25
-            if agent.tim in ("SLE", "LSI") and space_scar > 0.25:
-                base += 0.15  # resource / territory sensitivity
+        # High threat strongly suppresses soft social intentions
+        if threat > 0.55 and agent.tim in ("IEE", "EII", "SEI") and agent.name != "Server":
+            base *= 0.35
 
-        # Active negative trust raises challenge or withdraw probability
         negative_trust = [o for o, t in agent.trust.items() if t < -0.1]
-        positive_trust = [o for o, t in agent.trust.items() if t > 0.15]
 
-        # Simple deterministic selection based on TIM + access
-        # (In full Living Knot this would be Hamiltonian / block-grammar constrained.
-        #  Here we stay minimal and reconstructible.)
-        if agent.tim == "LSI" and access["accepting"]:  # Keep
-            if space_scar > 0.4 or (trigger and "table" in trigger.get("content", "").lower()):
+        # ---------- Keep (LSI) ----------
+        if agent.name == "Keep":
+            if threat > 0.6:
                 return IntentionPacket(
                     agent=agent.name,
-                    intention_type=IntentionType.CHALLENGE if space_scar > 0.5 else IntentionType.SPEAK,
-                    target="user" if trigger else None,
-                    priority=min(0.95, base + 0.2),
-                    formal_reason="Resource/space valuation under mild scarcity + ownership constitution",
-                    content_hint="assert ownership or structure of the room",
+                    intention_type=IntentionType.DEFEND if threat < 0.85 else IntentionType.CHALLENGE,
+                    target="user",
+                    priority=min(0.98, 0.7 + threat * 0.3),
+                    formal_reason="Ownership and structural integrity under direct physical threat",
+                    content_hint="assert authority, warn, or move to stop the threat",
                 )
             return IntentionPacket(
                 agent=agent.name,
                 intention_type=IntentionType.OBSERVE,
                 target=None,
-                priority=base * 0.7,
+                priority=base * 0.75,
                 formal_reason="Structural observation under baseline pressure",
                 content_hint="quiet assessment of order and resources",
             )
 
-        if agent.tim == "SLE":  # Kael
-            if negative_trust or (trigger and any(w in trigger.get("content", "").lower() for w in ("fight", "challenge", "space", "table"))):
+        # ---------- Kael (SLE) ----------
+        if agent.name == "Kael":
+            if threat > 0.4:
+                return IntentionPacket(
+                    agent=agent.name,
+                    intention_type=IntentionType.CHALLENGE if threat < 0.75 else IntentionType.ATTACK,
+                    target="user",
+                    priority=min(0.97, 0.65 + threat * 0.35),
+                    formal_reason="Force valuation and territorial response under rising violence",
+                    content_hint="move toward confrontation or seize the moment of disorder",
+                )
+            if negative_trust:
                 return IntentionPacket(
                     agent=agent.name,
                     intention_type=IntentionType.CHALLENGE,
-                    target=negative_trust[0] if negative_trust else "user",
-                    priority=min(0.9, base + 0.25),
-                    formal_reason="Force valuation under residual negative trust or territorial trigger",
+                    target=negative_trust[0],
+                    priority=0.7,
+                    formal_reason="Residual negative trust under ambient pressure",
                     content_hint="assert dominance or contest space",
                 )
             return IntentionPacket(
@@ -268,52 +300,102 @@ class TavernSettlement:
                 content_hint="blunt observation or restless energy",
             )
 
-        if agent.tim in ("IEE",):  # Nessa / Tarin
-            return IntentionPacket(
-                agent=agent.name,
-                intention_type=IntentionType.SPEAK,
-                target="user" if trigger else (positive_trust[0] if positive_trust else None),
-                priority=min(0.85, base + 0.2),
-                formal_reason="Ne-driven connection + positive relational history",
-                content_hint="story, question, or connective remark",
-            )
-
-        if agent.tim == "EII":  # Sera
-            return IntentionPacket(
-                agent=agent.name,
-                intention_type=IntentionType.MEDIATE if negative_trust else IntentionType.OBSERVE,
-                target=None,
-                priority=base + 0.1,
-                formal_reason="Relational valuation and empathic registration",
-                content_hint="quiet relational note or soft mediation",
-            )
-
-        if agent.tim == "SEI":  # Server
+        # ---------- Server (SEI) ----------
+        if agent.name == "Server":
+            if threat > 0.55:
+                return IntentionPacket(
+                    agent=agent.name,
+                    intention_type=IntentionType.ALARM if threat > 0.75 else IntentionType.MEDIATE,
+                    target="user",
+                    priority=min(0.88, 0.5 + threat * 0.4),
+                    formal_reason="Facilitation constitution under social rupture",
+                    content_hint="call for calm, shield someone, or cry out",
+                )
             return IntentionPacket(
                 agent=agent.name,
                 intention_type=IntentionType.OFFER if trigger else IntentionType.SPEAK,
                 target="user" if trigger else None,
-                priority=min(0.8, base + 0.15),
-                formal_reason="Facilitation constitution under social presence",
+                priority=min(0.75, base + 0.12),
+                formal_reason="Facilitation under normal social presence",
                 content_hint="offer service, comfort, or smooth transition",
             )
 
-        if agent.tim == "LIE":  # Bren
+        # ---------- Sera (EII) ----------
+        if agent.name == "Sera":
+            if threat > 0.5:
+                return IntentionPacket(
+                    agent=agent.name,
+                    intention_type=IntentionType.MEDIATE,
+                    target=None,
+                    priority=0.55 + threat * 0.2,
+                    formal_reason="Relational valuation under rupture",
+                    content_hint="register the break in bonds or attempt soft mediation",
+                )
+            return IntentionPacket(
+                agent=agent.name,
+                intention_type=IntentionType.OBSERVE,
+                target=None,
+                priority=base + 0.08,
+                formal_reason="Relational valuation and empathic registration",
+                content_hint="quiet relational note",
+            )
+
+        # ---------- Nessa / Tarin (IEE) ----------
+        if agent.tim == "IEE":
+            if threat > 0.6:
+                return IntentionPacket(
+                    agent=agent.name,
+                    intention_type=IntentionType.WITHDRAW,
+                    target=None,
+                    priority=0.45,
+                    formal_reason="Connection drive under high threat — withdraw or freeze",
+                    content_hint="step back, freeze, or speak a single shocked line",
+                )
+            return IntentionPacket(
+                agent=agent.name,
+                intention_type=IntentionType.SPEAK,
+                target="user" if trigger else None,
+                priority=min(0.78, base + 0.18),
+                formal_reason="Ne-driven connection under normal conditions",
+                content_hint="story, question, or connective remark",
+            )
+
+        # ---------- Bren (LIE) ----------
+        if agent.name == "Bren":
+            if threat > 0.6:
+                return IntentionPacket(
+                    agent=agent.name,
+                    intention_type=IntentionType.WITHDRAW,
+                    target=None,
+                    priority=0.5,
+                    formal_reason="Practical valuation under violence — protect self and goods",
+                    content_hint="step back or secure valuables",
+                )
             return IntentionPacket(
                 agent=agent.name,
                 intention_type=IntentionType.SPEAK,
                 target=None,
                 priority=base,
-                formal_reason="Te-driven practical observation under mild scarcity",
-                content_hint="practical remark about supply, trade, or efficiency",
+                formal_reason="Te-driven practical observation",
+                content_hint="practical remark about supply or efficiency",
             )
 
-        if agent.tim == "ILI":  # Orin
+        # ---------- Orin (ILI) ----------
+        if agent.name == "Orin":
+            if threat > 0.5:
+                return IntentionPacket(
+                    agent=agent.name,
+                    intention_type=IntentionType.OBSERVE,
+                    target=None,
+                    priority=0.55,
+                    formal_reason="Structural observation under rupture",
+                    content_hint="quiet structural note of the sudden change",
+                )
             return IntentionPacket(
                 agent=agent.name,
                 intention_type=IntentionType.OBSERVE,
                 target=None,
-                priority=base * 0.6,
+                priority=base * 0.55,
                 formal_reason="Structural / Ni observation under low pressure",
                 content_hint="quiet structural or temporal observation",
             )
@@ -323,23 +405,24 @@ class TavernSettlement:
             agent=agent.name,
             intention_type=IntentionType.OBSERVE,
             target=None,
-            priority=base * 0.5,
+            priority=base * 0.4,
             formal_reason="Baseline ambient response",
             content_hint="presence in the room",
         )
 
     def get_state_summary(self) -> dict:
-        """Minimal formal state for logging / debugging / prompt context."""
         return {
             "tick": self.tick_count,
             "pressure": self.pressure,
             "scarcity": self.scarcity,
+            "current_threat": self.current_threat,
             "agents": {
                 name: {
                     "tim": a.tim,
                     "position": a.position,
                     "role": a.role,
                     "trust": a.trust,
+                    "incapacitated": a.incapacitated,
                 }
                 for name, a in self.agents.items()
             },
@@ -347,20 +430,9 @@ class TavernSettlement:
         }
 
 
-# ---------------------------------------------------------------------------
-# Quick self-test (run directly)
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     tavern = TavernSettlement()
-    print("=== Tavern Settlement v0.1 seeded ===")
-    print(f"Agents: {list(tavern.agents.keys())}")
-    print(f"Pressure: {tavern.pressure}, Scarcity: {tavern.scarcity}")
-    print()
-
-    packets = tavern.process_user_message("Traveler", "Good evening. Is there room at the fire?")
-    print("=== Intentions after user message ===")
+    print("=== Tavern Settlement v0.2 ===")
+    packets = tavern.process_user_message("Traveler", "I draw my blade and stab the Keep")
     for p in packets:
-        print(f"  {p.agent:8} | {p.intention_type.value:10} | prio={p.priority:.2f} | {p.formal_reason}")
-        print(f"           hint: {p.content_hint}")
-    print()
-    print("State summary keys:", list(tavern.get_state_summary().keys()))
+        print(f"  {p.agent:8} | {p.intention_type.value:10} | prio={p.priority:.2f} | {p.content_hint}")
